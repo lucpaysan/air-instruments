@@ -1,0 +1,1263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Air Instruments — Hand Controlled</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;700;800&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-deep: #07070c;
+      --bg-surface: #11111c;
+      --bg-elevated: #1a1a28;
+      --text-primary: #F8F8F2;
+      --text-muted: #6B6B85;
+      --accent: #FF3D71;
+      --accent-glow: rgba(255, 61, 113, 0.45);
+      --finger: #00E5FF;
+      --finger-glow: rgba(0, 229, 255, 0.55);
+    }
+
+    ::selection { background: var(--accent); color: var(--text-primary); }
+
+    html, body { height: 100%; overflow: hidden; }
+
+    body {
+      font-family: 'DM Sans', system-ui, sans-serif;
+      background: var(--bg-deep);
+      color: var(--text-primary);
+      position: relative;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    #camera-bg {
+      position: fixed; inset: 0; width: 100%; height: 100%;
+      object-fit: cover; opacity: 0.08; z-index: 0;
+      transform: scaleX(-1);
+      filter: blur(2px);
+    }
+
+    #gesture-canvas {
+      position: fixed; inset: 0; width: 100%; height: 100%;
+      z-index: 20; pointer-events: none;
+    }
+
+    /* Permission prompt */
+    .permission-prompt {
+      position: fixed; inset: 0; background: var(--bg-deep);
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 20px; z-index: 100; padding: 32px;
+      text-align: center;
+    }
+    .permission-prompt.hidden { display: none; }
+    .permission-prompt h1 {
+      font-family: 'Outfit', sans-serif; font-size: 32px; font-weight: 800;
+      background: linear-gradient(90deg, var(--accent), var(--finger));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .permission-prompt p { color: var(--text-muted); max-width: 360px; line-height: 1.6; }
+    .permission-btn {
+      background: var(--accent); color: var(--text-primary); border: none;
+      padding: 14px 32px; border-radius: 14px; font-size: 15px; font-weight: 600;
+      cursor: pointer; transition: transform 0.15s, box-shadow 0.2s;
+      font-family: 'Outfit', sans-serif; letter-spacing: 0.5px;
+    }
+    .permission-btn:hover {
+      transform: scale(1.04);
+      box-shadow: 0 8px 30px var(--accent-glow);
+    }
+
+    /* Main layout — side panels pulled inward so the hand never has to reach the edge */
+    .stage {
+      position: relative; z-index: 5; display: grid;
+      grid-template-columns: 100px 1fr 220px;
+      gap: 24px; padding: 24px 80px; height: 100vh; align-items: stretch;
+    }
+
+    /* Volume column (left) */
+    .vol-col {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 12px; padding: 16px 8px;
+      background: rgba(17,17,28,0.55); backdrop-filter: blur(14px);
+      border-radius: 20px; border: 1px solid rgba(255,255,255,0.04);
+    }
+    .vol-label {
+      font-size: 10px; font-weight: 700; letter-spacing: 2px;
+      color: var(--text-muted); text-transform: uppercase;
+    }
+    .vol-track {
+      position: relative; flex: 1; width: 14px;
+      background: rgba(255,255,255,0.04); border-radius: 8px;
+      overflow: visible; cursor: pointer;
+    }
+    .vol-fill {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      background: linear-gradient(0deg, var(--accent), #ff8ab4);
+      border-radius: 8px; height: 70%;
+      transition: height 0.08s ease-out;
+    }
+    .vol-handle {
+      position: absolute; left: 50%;
+      width: 36px; height: 18px;
+      background: var(--text-primary);
+      border-radius: 8px;
+      transform: translate(-50%, 50%);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      transition: box-shadow 0.2s, transform 0.15s;
+    }
+    .vol-handle.active { box-shadow: 0 0 0 4px var(--accent-glow), 0 4px 12px rgba(0,0,0,0.4); }
+    .vol-value {
+      font-family: 'Outfit', sans-serif; font-weight: 700; font-size: 14px;
+      color: var(--text-primary);
+    }
+
+    /* Center: drum pads */
+    .drum-stage {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 20px;
+    }
+    .title-row { text-align: center; }
+    .title-row h1 {
+      font-family: 'Outfit', sans-serif; font-size: 22px; font-weight: 800;
+      letter-spacing: 3px; text-transform: uppercase;
+    }
+    .title-row h1 span { color: var(--accent); }
+    .title-row p { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
+
+    .pad-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 18px; width: 100%; max-width: 720px; aspect-ratio: 3/2;
+    }
+
+    .pad {
+      position: relative;
+      background: radial-gradient(circle at 50% 30%, var(--bg-elevated), var(--bg-surface));
+      border: 2px solid rgba(255,255,255,0.06);
+      border-radius: 22px;
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 4px; cursor: pointer;
+      transition: transform 0.12s, border-color 0.15s, box-shadow 0.15s, background 0.15s;
+      overflow: hidden;
+    }
+    .pad::before {
+      content: ''; position: absolute; inset: 0;
+      background: radial-gradient(circle at 50% 50%, var(--pad-color, var(--accent-glow)) 0%, transparent 70%);
+      opacity: 0; transition: opacity 0.15s;
+    }
+    .pad.hover {
+      border-color: var(--pad-color, var(--accent));
+      transform: translateY(-3px) scale(1.02);
+      box-shadow: 0 0 0 2px var(--pad-color, var(--accent)), 0 10px 30px rgba(0,0,0,0.4);
+    }
+    .pad.hover::before { opacity: 0.25; }
+    .pad.struck {
+      animation: strike 0.32s ease-out;
+    }
+    .pad.struck::before { opacity: 0.55; }
+
+    @keyframes strike {
+      0%   { transform: scale(1); }
+      25%  { transform: scale(0.92); box-shadow: 0 0 0 3px var(--pad-color, var(--accent)), 0 0 50px var(--pad-color, var(--accent)); }
+      100% { transform: scale(1); }
+    }
+
+    .pad-icon {
+      font-family: 'Outfit', sans-serif; font-weight: 800; font-size: 22px;
+      color: var(--pad-color, var(--accent)); z-index: 1;
+      text-shadow: 0 0 18px var(--pad-color, var(--accent));
+    }
+    .pad-name {
+      font-size: 9px; font-weight: 600; letter-spacing: 1.5px;
+      color: var(--text-muted); text-transform: uppercase; z-index: 1;
+    }
+    .pad.hover .pad-name { color: var(--text-primary); }
+
+    /* Right: drum kit selector */
+    .kit-col {
+      display: flex; flex-direction: column; gap: 12px;
+      padding: 18px 14px;
+      background: rgba(17,17,28,0.55); backdrop-filter: blur(14px);
+      border-radius: 20px; border: 1px solid rgba(255,255,255,0.04);
+    }
+    .kit-col-title {
+      font-family: 'Outfit', sans-serif; font-weight: 700; font-size: 13px;
+      letter-spacing: 1.5px; text-transform: uppercase;
+      color: var(--text-muted); text-align: center; margin-bottom: 4px;
+    }
+    .kit-btn {
+      position: relative;
+      padding: 14px 12px;
+      background: var(--bg-elevated);
+      border: 2px solid rgba(255,255,255,0.06);
+      border-radius: 14px;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: transform 0.12s, border-color 0.15s, background 0.15s;
+      font-family: 'Outfit', sans-serif; font-weight: 700; font-size: 13px;
+      letter-spacing: 1px; text-transform: uppercase;
+      text-align: left;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .kit-btn:hover, .kit-btn.hover {
+      border-color: var(--kit-color, var(--accent));
+      background: rgba(255,255,255,0.04);
+      transform: translateX(-2px);
+    }
+    .kit-btn.active {
+      border-color: var(--kit-color, var(--accent));
+      background: linear-gradient(135deg, rgba(255,255,255,0.06), transparent);
+      box-shadow: 0 0 0 1px var(--kit-color, var(--accent)), 0 6px 20px rgba(0,0,0,0.3);
+    }
+    .kit-dot {
+      width: 12px; height: 12px; border-radius: 50%;
+      background: var(--kit-color, var(--accent));
+      box-shadow: 0 0 12px var(--kit-color, var(--accent));
+    }
+    .kit-meta { display: flex; flex-direction: column; gap: 2px; }
+    .kit-desc { font-size: 9px; color: var(--text-muted); letter-spacing: 0.5px; text-transform: none; }
+
+    /* Status bar */
+    .status-bar {
+      position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 14px; padding: 8px 18px;
+      background: rgba(17,17,28,0.7); backdrop-filter: blur(14px);
+      border-radius: 100px; border: 1px solid rgba(255,255,255,0.05);
+      font-size: 11px; color: var(--text-muted); z-index: 30;
+    }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--text-muted);
+      transition: background 0.2s, box-shadow 0.2s;
+    }
+    .status-dot.live {
+      background: var(--finger);
+      box-shadow: 0 0 12px var(--finger);
+      animation: pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.4; }
+    }
+
+    /* Warning */
+    .warning-banner {
+      position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(255,61,113,0.15); border: 1px solid var(--accent);
+      color: var(--accent); padding: 10px 20px; border-radius: 12px;
+      font-size: 13px; z-index: 50; opacity: 0; transition: opacity 0.3s;
+      pointer-events: auto; max-width: 80vw; text-align: center;
+    }
+    .warning-banner.visible { opacity: 1; }
+
+    /* Diagnostic log panel — hidden by default, visible only with ?debug=1 */
+    .diag-panel {
+      position: fixed; top: 12px; right: 12px; z-index: 200;
+      background: rgba(0,0,0,0.9); color: #00ff88; font-family: monospace;
+      font-size: 10px; padding: 8px 10px; border-radius: 8px;
+      max-width: 380px; max-height: 280px; overflow-y: auto;
+      border: 1px solid rgba(0,255,136,0.3); pointer-events: auto;
+      line-height: 1.5; display: none;
+    }
+    .diag-panel.visible { display: block; }
+    .diag-panel .err { color: #ff5577; }
+    .diag-panel .ok  { color: #00ff88; }
+    .diag-panel .info { color: #ffaa55; }
+    .warning-banner.visible { opacity: 1; }
+    .warning-banner.visible { opacity: 1; }
+  </style>
+</head>
+<body>
+  <video id="camera-bg" autoplay playsinline muted></video>
+  <canvas id="gesture-canvas"></canvas>
+
+  <div id="permission-prompt" class="permission-prompt">
+    <h1>AIR INSTRUMENTS</h1>
+    <p>Use your hand to play. Hover your index finger over a pad, instrument button, or the volume slider to interact.</p>
+    <p style="font-size: 11px; color: var(--text-muted); margin-top: -8px;">If the camera prompt doesn't appear, open this page via <code>http://localhost:8000</code> (not file://).</p>
+    <button id="permission-btn" class="permission-btn">Start Drumming</button>
+    <div id="btn-status" style="font-size: 12px; color: var(--text-muted); min-height: 18px;"></div>
+  </div>
+
+  <div id="warning-banner" class="warning-banner"></div>
+  <div id="diag-panel" class="diag-panel"><div class="info">[diag] page loaded</div></div>
+
+  <div class="stage">
+    <!-- Volume slider (left) -->
+    <div class="vol-col">
+      <div class="vol-label">VOL</div>
+      <div id="vol-track" class="vol-track">
+        <div id="vol-fill" class="vol-fill"></div>
+        <div id="vol-handle" class="vol-handle" style="bottom: 70%;"></div>
+      </div>
+      <div id="vol-value" class="vol-value">70</div>
+    </div>
+
+    <!-- Instrument pads (center) -->
+    <div class="drum-stage">
+      <div class="title-row">
+        <h1>AIR <span id="title-flavor">DRUMS</span></h1>
+        <p>Hover a finger on a pad to play it</p>
+      </div>
+      <div class="pad-grid" id="pad-grid"><!-- populated by JS --></div>
+    </div>
+
+    <!-- Instrument-type selector (right) -->
+    <div class="kit-col">
+      <div class="kit-col-title">INSTRUMENT</div>
+      <div class="kit-btn active" data-type="drums" style="--kit-color: #FF3D71">
+        <div class="kit-dot"></div>
+        <div class="kit-meta"><div>DRUMS</div><div class="kit-desc">Percussion</div></div>
+      </div>
+      <div class="kit-btn" data-type="bass" style="--kit-color: #A29BFE">
+        <div class="kit-dot"></div>
+        <div class="kit-meta"><div>BASS</div><div class="kit-desc">Low end</div></div>
+      </div>
+      <div class="kit-btn" data-type="synth" style="--kit-color: #00E5FF">
+        <div class="kit-dot"></div>
+        <div class="kit-meta"><div>SYNTH</div><div class="kit-desc">Leads &amp; pads</div></div>
+      </div>
+      <div class="kit-btn" data-type="keys" style="--kit-color: #FFD93D">
+        <div class="kit-dot"></div>
+        <div class="kit-meta"><div>KEYS</div><div class="kit-desc">Piano / EP</div></div>
+      </div>
+      <div class="kit-btn" data-type="pluck" style="--kit-color: #A8E6CF">
+        <div class="kit-dot"></div>
+        <div class="kit-meta"><div>PLUCK</div><div class="kit-desc">Bells &amp; mallets</div></div>
+      </div>
+
+      <!-- Drum sub-kit selector — only shown when Drums is the active type -->
+      <div class="sub-col" id="sub-col" style="margin-top: 8px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.05);">
+        <div class="kit-col-title" style="font-size: 10px; opacity: 0.7;">DRUM KIT</div>
+        <div class="kit-btn sub-kit active" data-kit="808" style="--kit-color: #FF3D71">
+          <div class="kit-dot"></div>
+          <div class="kit-meta"><div>808</div><div class="kit-desc">Electronic</div></div>
+        </div>
+        <div class="kit-btn sub-kit" data-kit="acoustic" style="--kit-color: #FF8C42">
+          <div class="kit-dot"></div>
+          <div class="kit-meta"><div>ACOUSTIC</div><div class="kit-desc">Live room</div></div>
+        </div>
+        <div class="kit-btn sub-kit" data-kit="lofi" style="--kit-color: #A8E6CF">
+          <div class="kit-dot"></div>
+          <div class="kit-meta"><div>LO-FI</div><div class="kit-desc">Mellow</div></div>
+        </div>
+        <div class="kit-btn sub-kit" data-kit="rock" style="--kit-color: #FF6B6B">
+          <div class="kit-dot"></div>
+          <div class="kit-meta"><div>ROCK</div><div class="kit-desc">Punchy</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="status-bar">
+    <div id="status-dot" class="status-dot"></div>
+    <span id="status-text">Hover a finger over the camera to begin</span>
+  </div>
+
+  <script>
+    // Load the legacy @mediapipe/hands package (UMD) — exposes window.Hands.
+    // This older package doesn't have the WebGL/CPU regression that
+    // @mediapipe/tasks-vision ≥ 0.10.10 has, so it works reliably on systems
+    // where the GPU delegate can't initialize.
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" crossorigin="anonymous"></script>
+  <script>
+    // ============================================================
+    // AIR DRUMS — hand-controlled drum machine
+    // ============================================================
+
+    // ===== Audio Engine =====
+    let audioCtx = null;
+    let masterGain = null;
+
+    function initAudio() {
+      if (audioCtx) return;
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      masterGain = audioCtx.createGain();
+      masterGain.gain.value = state.volume;
+      masterGain.connect(audioCtx.destination);
+    }
+
+    // Drum kit presets — each tunes the synthesis parameters
+    const KITS = {
+      '808': {
+        kick:  { freq: 150, endFreq: 30,  decay: 0.5,  level: 1.0, type: 'sine'     },
+        snare: { level: 0.6, decay: 0.18, tone: 220,  noise: 0.7 },
+        hihat: { level: 0.35, decay: 0.06, hp: 8000 },
+        tom:   { freq: 200, endFreq: 80, decay: 0.3,  level: 0.7 },
+        crash: { level: 0.45, decay: 0.9, hp: 5000 },
+        clap:  { level: 0.55, decay: 0.12, repeats: 3 },
+      },
+      'acoustic': {
+        kick:  { freq: 100, endFreq: 40,  decay: 0.25, level: 0.95, type: 'sine', click: 0.15 },
+        snare: { level: 0.7, decay: 0.2,  tone: 180,  noise: 0.8, hp: 1500 },
+        hihat: { level: 0.3, decay: 0.08, hp: 7000 },
+        tom:   { freq: 160, endFreq: 90, decay: 0.22, level: 0.7 },
+        crash: { level: 0.4, decay: 1.1,  hp: 4500 },
+        clap:  { level: 0.5, decay: 0.15, repeats: 2 },
+      },
+      'lofi': {
+        kick:  { freq: 90,  endFreq: 50,  decay: 0.4,  level: 0.9, type: 'sine' },
+        snare: { level: 0.55, decay: 0.22, tone: 200, noise: 0.5, hp: 1200, lp: 4000 },
+        hihat: { level: 0.28, decay: 0.09, hp: 6000, lp: 9000 },
+        tom:   { freq: 180, endFreq: 100, decay: 0.3,  level: 0.65, lp: 3000 },
+        crash: { level: 0.35, decay: 1.2,  hp: 4000, lp: 8000 },
+        clap:  { level: 0.45, decay: 0.18, repeats: 2 },
+      },
+      'rock': {
+        kick:  { freq: 130, endFreq: 35,  decay: 0.22, level: 1.0, type: 'sine', click: 0.3 },
+        snare: { level: 0.75, decay: 0.16, tone: 200, noise: 0.9, hp: 2000 },
+        hihat: { level: 0.32, decay: 0.05, hp: 8500 },
+        tom:   { freq: 220, endFreq: 90, decay: 0.2,  level: 0.75 },
+        crash: { level: 0.5, decay: 0.8,  hp: 5500 },
+        clap:  { level: 0.6, decay: 0.1,  repeats: 3 },
+      },
+    };
+
+    function makeNoiseBuffer(durationSec) {
+      const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * durationSec, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+      return buffer;
+    }
+
+    function playKick() {
+      const p = KITS[state.kit].kick;
+      const now = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = p.type || 'sine';
+      osc.frequency.setValueAtTime(p.freq, now);
+      osc.frequency.exponentialRampToValueAtTime(p.endFreq, now + 0.08);
+      gain.gain.setValueAtTime(p.level, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + p.decay);
+      osc.connect(gain);
+      gain.connect(masterGain);
+      osc.start(now);
+      osc.stop(now + p.decay);
+
+      if (p.click) {
+        const click = audioCtx.createBufferSource();
+        click.buffer = makeNoiseBuffer(0.02);
+        const cg = audioCtx.createGain();
+        cg.gain.setValueAtTime(p.click, now);
+        cg.gain.exponentialRampToValueAtTime(0.001, now + 0.02);
+        click.connect(cg); cg.connect(masterGain);
+        click.start(now);
+      }
+    }
+
+    function playSnare() {
+      const p = KITS[state.kit].snare;
+      const now = audioCtx.currentTime;
+
+      // Noise body
+      const noise = audioCtx.createBufferSource();
+      noise.buffer = makeNoiseBuffer(p.decay);
+      const nFilter = audioCtx.createBiquadFilter();
+      nFilter.type = 'highpass';
+      nFilter.frequency.value = p.hp || 1500;
+      const nGain = audioCtx.createGain();
+      nGain.gain.setValueAtTime(p.level * (p.noise || 0.7), now);
+      nGain.gain.exponentialRampToValueAtTime(0.001, now + p.decay);
+      noise.connect(nFilter); nFilter.connect(nGain); nGain.connect(masterGain);
+      noise.start(now);
+
+      // Tonal body
+      const osc = audioCtx.createOscillator();
+      const oGain = audioCtx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.value = p.tone || 200;
+      oGain.gain.setValueAtTime(p.level * 0.4, now);
+      oGain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+      osc.connect(oGain); oGain.connect(masterGain);
+      osc.start(now);
+      osc.stop(now + 0.1);
+    }
+
+    function playHihat() {
+      const p = KITS[state.kit].hihat;
+      const now = audioCtx.currentTime;
+      const noise = audioCtx.createBufferSource();
+      noise.buffer = makeNoiseBuffer(p.decay);
+      const hp = audioCtx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = p.hp || 8000;
+      const chain = [hp];
+      if (p.lp) {
+        const lp = audioCtx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.value = p.lp;
+        chain.push(lp);
+      }
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(p.level, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + p.decay);
+      noise.connect(hp);
+      let last = hp;
+      chain.slice(1).forEach(node => { last.connect(node); last = node; });
+      last.connect(g); g.connect(masterGain);
+      noise.start(now);
+    }
+
+    function playTom() {
+      const p = KITS[state.kit].tom;
+      const now = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(p.freq, now);
+      osc.frequency.exponentialRampToValueAtTime(p.endFreq, now + 0.12);
+      gain.gain.setValueAtTime(p.level, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + p.decay);
+      if (p.lp) {
+        const lp = audioCtx.createBiquadFilter();
+        lp.type = 'lowpass'; lp.frequency.value = p.lp;
+        osc.connect(lp); lp.connect(gain); gain.connect(masterGain);
+      } else {
+        osc.connect(gain); gain.connect(masterGain);
+      }
+      osc.start(now);
+      osc.stop(now + p.decay);
+    }
+
+    function playCrash() {
+      const p = KITS[state.kit].crash;
+      const now = audioCtx.currentTime;
+      const noise = audioCtx.createBufferSource();
+      noise.buffer = makeNoiseBuffer(p.decay);
+      const hp = audioCtx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = p.hp || 5000;
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(p.level, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + p.decay);
+      noise.connect(hp); hp.connect(g); g.connect(masterGain);
+      noise.start(now);
+    }
+
+    function playClap() {
+      const p = KITS[state.kit].clap;
+      const now = audioCtx.currentTime;
+      const repeats = p.repeats || 3;
+      for (let i = 0; i < repeats; i++) {
+        const t = now + i * 0.012;
+        const noise = audioCtx.createBufferSource();
+        noise.buffer = makeNoiseBuffer(0.05);
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(p.level * (i === repeats - 1 ? 1 : 0.6), t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + (i === repeats - 1 ? p.decay : 0.05));
+        noise.connect(g); g.connect(masterGain);
+        noise.start(t);
+      }
+    }
+
+    // ============================================================
+    //  Synth engines for non-drum instruments.
+    //  Each one exposes a play() function and a small param block
+    //  used by the pad renderer. Every voice chains to masterGain.
+    // ============================================================
+
+    // Shared ADSR helper. Returns the gain node you should connect to master.
+    function envelope(now, attack, decay, sustain, release, peak) {
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(0, now);
+      g.gain.linearRampToValueAtTime(peak, now + attack);
+      g.gain.linearRampToValueAtTime(peak * sustain, now + attack + decay);
+      return g;
+    }
+
+    // ---------- BASS ----------
+    // 6 bass voices — sub, reese, wobble, slap, funky, acid
+    const BASS_PRESETS = {
+      sub:    { icon: 'S', color: '#A29BFE', name: 'Sub',    wave: 'sine',     freq: 55,  attack: 0.005, decay: 0.05, sustain: 0.6, release: 0.4,  peak: 0.7 },
+      reese:  { icon: 'R', color: '#6C5CE7', name: 'Reese',  wave: 'sawtooth', freq: 65,  attack: 0.02,  decay: 0.1,  sustain: 0.5, release: 0.3,  peak: 0.45, detune: 8, filter: 600 },
+      wobble: { icon: 'W', color: '#00E5FF', name: 'Wobble', wave: 'sawtooth', freq: 55,  attack: 0.005, decay: 0.05, sustain: 0.7, release: 0.3,  peak: 0.55, lfo: 6, lfoDepth: 700 },
+      slap:   { icon: 'L', color: '#FF8C42', name: 'Slap',   wave: 'triangle', freq: 90,  attack: 0.001, decay: 0.04, sustain: 0.3, release: 0.12, peak: 0.7, pluck: true },
+      funky:  { icon: 'F', color: '#A8E6CF', name: 'Funky',  wave: 'square',   freq: 80,  attack: 0.005, decay: 0.05, sustain: 0.0, release: 0.18, peak: 0.4 },
+      acid:   { icon: 'A', color: '#FF3D71', name: 'Acid',   wave: 'sawtooth', freq: 70,  attack: 0.001, decay: 0.05, sustain: 0.0, release: 0.25, peak: 0.55, filter: 1200, q: 8 },
+    };
+    function playBass(name) {
+      const p = BASS_PRESETS[name]; if (!p) return;
+      const now = audioCtx.currentTime;
+      const osc1 = audioCtx.createOscillator();
+      const osc2 = audioCtx.createOscillator();
+      osc1.type = p.wave; osc1.frequency.value = p.freq;
+      osc2.type = p.wave; osc2.frequency.value = p.freq * 1.01;
+      if (p.detune) { osc2.detune.value = p.detune; }
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = p.filter || 800;
+      filter.Q.value = p.q || 1;
+      const g = envelope(now, p.attack, p.decay, p.sustain, p.release, p.peak);
+      osc1.connect(filter); osc2.connect(filter); filter.connect(g); g.connect(masterGain);
+      // Add filter sweep + LFO if defined
+      if (p.lfo) {
+        const lfo = audioCtx.createOscillator();
+        const lfoGain = audioCtx.createGain();
+        lfo.frequency.value = p.lfo; lfoGain.gain.value = p.lfoDepth || 400;
+        lfo.connect(lfoGain); lfoGain.connect(filter.frequency);
+        lfo.start(now); lfo.stop(now + p.release + 0.4);
+      }
+      if (p.pluck) {
+        // Pluck — quick upward filter sweep
+        filter.frequency.setValueAtTime(2000, now);
+        filter.frequency.exponentialRampToValueAtTime(200, now + 0.15);
+      }
+      const dur = p.attack + p.decay + (p.sustain > 0 ? p.release : p.release);
+      osc1.start(now); osc1.stop(now + dur + 0.05);
+      osc2.start(now); osc2.stop(now + dur + 0.05);
+    }
+
+    // ---------- SYNTH ----------
+    // 6 lead/synth voices — saw-lead, square-lead, plucky, detune, supersaw, arp
+    const SYNTH_PRESETS = {
+      saw:     { icon: 'S', color: '#FF3D71', name: 'Saw',     wave: 'sawtooth', freq: 440, attack: 0.01, decay: 0.05, sustain: 0.7, release: 0.3, peak: 0.35 },
+      square:  { icon: 'Q', color: '#FFD93D', name: 'Square',  wave: 'square',   freq: 440, attack: 0.005,decay: 0.04, sustain: 0.6, release: 0.25,peak: 0.3 },
+      plucky:  { icon: 'P', color: '#A8E6CF', name: 'Pluck',   wave: 'triangle', freq: 523, attack: 0.001,decay: 0.08, sustain: 0.0, release: 0.2, peak: 0.5, filter: 2200 },
+      detune:  { icon: 'D', color: '#6C5CE7', name: 'Detune',  wave: 'sawtooth', freq: 392, attack: 0.02, decay: 0.1,  sustain: 0.6, release: 0.35,peak: 0.3, detune: 12 },
+      supersaw:{ icon: 'X', color: '#00E5FF', name: 'Supersaw',wave: 'sawtooth', freq: 330, attack: 0.03, decay: 0.1,  sustain: 0.8, release: 0.4, peak: 0.22, voices: 5, spread: 20 },
+      arp:     { icon: 'A', color: '#FF8C42', name: 'Arp',     wave: 'square',   freq: 660, attack: 0.001,decay: 0.05, sustain: 0.0, release: 0.15,peak: 0.4 },
+    };
+    function playSynth(name) {
+      const p = SYNTH_PRESETS[name]; if (!p) return;
+      const now = audioCtx.currentTime;
+      const g = envelope(now, p.attack, p.decay, p.sustain, p.release, p.peak);
+      const voices = p.voices || 2;
+      const oscs = [];
+      for (let i = 0; i < voices; i++) {
+        const o = audioCtx.createOscillator();
+        o.type = p.wave; o.frequency.value = p.freq;
+        if (voices > 1) o.detune.value = (i - (voices - 1) / 2) * (p.spread || 10);
+        o.connect(g); oscs.push(o);
+      }
+      if (p.filter) {
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'lowpass'; filter.frequency.value = p.filter;
+        g.disconnect(); g.connect(filter); filter.connect(masterGain);
+      } else {
+        g.connect(masterGain);
+      }
+      const dur = p.attack + p.decay + p.release + 0.1;
+      oscs.forEach(o => { o.start(now); o.stop(now + dur); });
+    }
+
+    // ---------- KEYS ----------
+    // 6 key/EP voices — piano, ep, organ, rhodes, clav, honky
+    const KEYS_PRESETS = {
+      piano:   { icon: 'P', color: '#F8F8F2', name: 'Piano',   freq: 392, harmonic: [1, 0.3, 0.1],     attack: 0.002, decay: 0.4, sustain: 0.2, release: 0.6, peak: 0.4, wave: 'sine' },
+      ep:      { icon: 'E', color: '#FFD93D', name: 'EP',      freq: 349, harmonic: [1, 0.4, 0.2, 0.08], attack: 0.005, decay: 0.3, sustain: 0.4, release: 0.5, peak: 0.35, wave: 'sine', tremolo: 6 },
+      organ:   { icon: 'O', color: '#FF8C42', name: 'Organ',   freq: 262, harmonic: [1, 0.5, 0.25], attack: 0.01, decay: 0.05, sustain: 0.9, release: 0.2, peak: 0.25, wave: 'sine' },
+      rhodes:  { icon: 'R', color: '#A8E6CF', name: 'Rhodes',  freq: 440, harmonic: [1, 0.3, 0.15, 0.05], attack: 0.005, decay: 0.25, sustain: 0.5, release: 0.7, peak: 0.32, wave: 'sine', tremolo: 5 },
+      clav:    { icon: 'C', color: '#A29BFE', name: 'Clav',    freq: 523, harmonic: [1, 0.2, 0.5],     attack: 0.001, decay: 0.05, sustain: 0.1, release: 0.2, peak: 0.4,  wave: 'square' },
+      honky:   { icon: 'H', color: '#FF3D71', name: 'Honky',   freq: 233, harmonic: [1, 0.4, 0.3, 0.1], attack: 0.01, decay: 0.15, sustain: 0.0, release: 0.4, peak: 0.35, wave: 'sine', detune: 8 },
+    };
+    function playKeys(name) {
+      const p = KEYS_PRESETS[name]; if (!p) return;
+      const now = audioCtx.currentTime;
+      const g = envelope(now, p.attack, p.decay, p.sustain, p.release, p.peak);
+      p.harmonic.forEach((amp, i) => {
+        const o = audioCtx.createOscillator();
+        o.type = p.wave; o.frequency.value = p.freq * (i + 1);
+        if (i > 0 && p.detune) o.detune.value = (i % 2 ? 1 : -1) * p.detune;
+        const og = audioCtx.createGain();
+        og.gain.value = amp;
+        o.connect(og); og.connect(g);
+        o.start(now);
+        o.stop(now + p.attack + p.decay + p.release + 0.2);
+      });
+      if (p.tremolo) {
+        const lfo = audioCtx.createOscillator();
+        const lg = audioCtx.createGain();
+        lfo.frequency.value = p.tremolo; lg.gain.value = 0.04;
+        lfo.connect(lg); lg.connect(g.gain);
+        lfo.start(now); lfo.stop(now + p.attack + p.decay + p.release + 0.2);
+      }
+      g.connect(masterGain);
+    }
+
+    // ---------- PLUCK / BELLS ----------
+    // 6 plucked/mallet voices — bell, marimba, kalimba, music-box, harp, vibra
+    const PLUCK_PRESETS = {
+      bell:     { icon: 'B', color: '#FFD93D', name: 'Bell',     freq: 880, attack: 0.001, decay: 0.6, sustain: 0.0, release: 1.2, peak: 0.45, harmonic: [1, 0.3, 0.5, 0.15], wave: 'sine' },
+      marimba:  { icon: 'M', color: '#FF8C42', name: 'Marimba',  freq: 440, attack: 0.001, decay: 0.25,sustain: 0.0, release: 0.5, peak: 0.5,  harmonic: [1, 0.15, 0.6], wave: 'sine' },
+      kalimba:  { icon: 'K', color: '#A8E6CF', name: 'Kalimba',  freq: 523, attack: 0.001, decay: 0.4, sustain: 0.1, release: 0.8, peak: 0.4,  harmonic: [1, 0.4, 0.1, 0.05], wave: 'sine' },
+      mbox:     { icon: 'X', color: '#A29BFE', name: 'MusicBox', freq: 1320,attack: 0.001, decay: 0.1, sustain: 0.0, release: 0.3, peak: 0.35, harmonic: [1, 0.6, 0.2], wave: 'triangle' },
+      harp:     { icon: 'H', color: '#00E5FF', name: 'Harp',     freq: 392, attack: 0.005, decay: 0.2, sustain: 0.2, release: 0.6, peak: 0.4,  harmonic: [1, 0.3, 0.1], wave: 'triangle', pluck: 3000 },
+      vibra:    { icon: 'V', color: '#FF3D71', name: 'Vibra',    freq: 587, attack: 0.001, decay: 0.15,sustain: 0.0, release: 0.4, peak: 0.45, harmonic: [1, 0.5, 0.2, 0.08], wave: 'sine' },
+    };
+    function playPluck(name) {
+      const p = PLUCK_PRESETS[name]; if (!p) return;
+      const now = audioCtx.currentTime;
+      const g = envelope(now, p.attack, p.decay, p.sustain, p.release, p.peak);
+      if (p.pluck) {
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'lowpass'; filter.frequency.value = p.pluck;
+        filter.frequency.exponentialRampToValueAtTime(400, now + 0.2);
+        g.connect(filter); filter.connect(masterGain);
+      } else {
+        g.connect(masterGain);
+      }
+      p.harmonic.forEach((amp, i) => {
+        const o = audioCtx.createOscillator();
+        o.type = p.wave; o.frequency.value = p.freq * (i + 1);
+        const og = audioCtx.createGain();
+        og.gain.value = amp;
+        o.connect(og); og.connect(g);
+        o.start(now);
+        o.stop(now + p.attack + p.decay + p.release + 0.2);
+      });
+    }
+
+    // ============================================================
+    //  Pad library — single source of truth for the center grid.
+    //  `type` matches the right-column button. `name` is the pad id.
+    //  `play` is the synth function (drums route through strikeDrum).
+    // ============================================================
+    const DRUM_PADS = [
+      { name: 'kick',  icon: 'K', color: '#FF3D71', label: 'Kick',  play: () => playKick() },
+      { name: 'snare', icon: 'S', color: '#FF8C42', label: 'Snare', play: () => playSnare() },
+      { name: 'hihat', icon: 'H', color: '#FFD93D', label: 'Hi-Hat',play: () => playHihat() },
+      { name: 'tom',   icon: 'T', color: '#6C5CE7', label: 'Tom',   play: () => playTom() },
+      { name: 'crash', icon: 'C', color: '#00E5FF', label: 'Crash', play: () => playCrash() },
+      { name: 'clap',  icon: 'P', color: '#A8E6CF', label: 'Clap',  play: () => playClap() },
+    ];
+    const BASS_PADS = [
+      { name: 'sub',    icon: 'S', color: '#A29BFE', label: 'Sub',    play: () => playBass('sub') },
+      { name: 'reese',  icon: 'R', color: '#6C5CE7', label: 'Reese',  play: () => playBass('reese') },
+      { name: 'wobble', icon: 'W', color: '#00E5FF', label: 'Wobble', play: () => playBass('wobble') },
+      { name: 'slap',   icon: 'L', color: '#FF8C42', label: 'Slap',   play: () => playBass('slap') },
+      { name: 'funky',  icon: 'F', color: '#A8E6CF', label: 'Funky',  play: () => playBass('funky') },
+      { name: 'acid',   icon: 'A', color: '#FF3D71', label: 'Acid',   play: () => playBass('acid') },
+    ];
+    const SYNTH_PADS = [
+      { name: 'saw',      icon: 'S', color: '#FF3D71', label: 'Saw',     play: () => playSynth('saw') },
+      { name: 'square',   icon: 'Q', color: '#FFD93D', label: 'Square',  play: () => playSynth('square') },
+      { name: 'plucky',   icon: 'P', color: '#A8E6CF', label: 'Plucky',  play: () => playSynth('plucky') },
+      { name: 'detune',   icon: 'D', color: '#6C5CE7', label: 'Detune',  play: () => playSynth('detune') },
+      { name: 'supersaw', icon: 'X', color: '#00E5FF', label: 'Super',   play: () => playSynth('supersaw') },
+      { name: 'arp',      icon: 'A', color: '#FF8C42', label: 'Arp',     play: () => playSynth('arp') },
+    ];
+    const KEYS_PADS = [
+      { name: 'piano',  icon: 'P', color: '#F8F8F2', label: 'Piano',  play: () => playKeys('piano') },
+      { name: 'ep',     icon: 'E', color: '#FFD93D', label: 'EP',     play: () => playKeys('ep') },
+      { name: 'organ',  icon: 'O', color: '#FF8C42', label: 'Organ',  play: () => playKeys('organ') },
+      { name: 'rhodes', icon: 'R', color: '#A8E6CF', label: 'Rhodes', play: () => playKeys('rhodes') },
+      { name: 'clav',   icon: 'C', color: '#A29BFE', label: 'Clav',   play: () => playKeys('clav') },
+      { name: 'honky',  icon: 'H', color: '#FF3D71', label: 'Honky',  play: () => playKeys('honky') },
+    ];
+    const PLUCK_PADS = [
+      { name: 'bell',    icon: 'B', color: '#FFD93D', label: 'Bell',    play: () => playPluck('bell') },
+      { name: 'marimba', icon: 'M', color: '#FF8C42', label: 'Marimba', play: () => playPluck('marimba') },
+      { name: 'kalimba', icon: 'K', color: '#A8E6CF', label: 'Kalimba', play: () => playPluck('kalimba') },
+      { name: 'mbox',    icon: 'X', color: '#A29BFE', label: 'MBox',    play: () => playPluck('mbox') },
+      { name: 'harp',    icon: 'H', color: '#00E5FF', label: 'Harp',    play: () => playPluck('harp') },
+      { name: 'vibra',   icon: 'V', color: '#FF3D71', label: 'Vibra',   play: () => playPluck('vibra') },
+    ];
+
+    const TYPE_LIBRARY = {
+      drums:  { pads: DRUM_PADS,  title: 'DRUMS'  },
+      bass:   { pads: BASS_PADS,  title: 'BASS'   },
+      synth:  { pads: SYNTH_PADS, title: 'SYNTH'  },
+      keys:   { pads: KEYS_PADS,  title: 'KEYS'   },
+      pluck:  { pads: PLUCK_PADS, title: 'PLUCK'  },
+    };
+
+    function strikePad(pad) {
+      if (!audioCtx) initAudio();
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+      pad.play();
+    }
+
+    // ===== State =====
+    const state = {
+      volume: 0.7,
+      type: 'drums',     // current instrument type (drums/bass/synth/keys/pluck)
+      kit: '808',        // drum sub-kit, only used when type==='drums'
+      lastHandSeen: 0,
+    };
+
+    // ===== DOM refs =====
+    const video = document.getElementById('camera-bg');
+    const canvas = document.getElementById('gesture-canvas');
+    const ctx = canvas.getContext('2d');
+    const permissionPrompt = document.getElementById('permission-prompt');
+    const permissionBtn = document.getElementById('permission-btn');
+    const volTrack = document.getElementById('vol-track');
+    const volFill = document.getElementById('vol-fill');
+    const volHandle = document.getElementById('vol-handle');
+    const volValue = document.getElementById('vol-value');
+    const statusDot = document.getElementById('status-dot');
+    const statusText = document.getElementById('status-text');
+    const warningBanner = document.getElementById('warning-banner');
+    const padGrid = document.getElementById('pad-grid');
+    const titleFlavor = document.getElementById('title-flavor');
+    const subCol = document.getElementById('sub-col');
+
+    let pads = [];                         // current rendered pad elements
+    const typeBtns = Array.from(document.querySelectorAll('.kit-btn[data-type]'));
+    const subKitBtns = Array.from(document.querySelectorAll('.kit-btn[data-kit]'));
+
+    // Render the 6 pads for the given instrument type into the center grid.
+    function renderPads(type) {
+      const entry = TYPE_LIBRARY[type] || TYPE_LIBRARY.drums;
+      padGrid.innerHTML = '';
+      entry.pads.forEach(spec => {
+        const el = document.createElement('div');
+        el.className = 'pad';
+        el.dataset.pad = spec.name;
+        el.style.setProperty('--pad-color', spec.color);
+        el.innerHTML = `<div class="pad-icon">${spec.icon}</div><div class="pad-name">${spec.label}</div>`;
+        padGrid.appendChild(el);
+      });
+      pads = Array.from(padGrid.querySelectorAll('.pad'));
+      pads.forEach(el => el.addEventListener('click', onPadClick));
+      titleFlavor.textContent = entry.title;
+      // Hide the drum sub-kit selector for non-drum types
+      subCol.style.display = (type === 'drums') ? '' : 'none';
+      // Re-cache pad bounding rects for hit testing
+      computeRegions();
+    }
+
+    // Interactive regions — used for finger-hover detection.
+    // We compute these on resize AND whenever the type changes.
+    let regions = [];
+    function computeRegions() {
+      regions = [];
+      pads.forEach(el => {
+        const r = el.getBoundingClientRect();
+        regions.push({ type: 'pad', name: el.dataset.pad, el,
+          x: r.left, y: r.top, w: r.width, h: r.height });
+      });
+      typeBtns.forEach(el => {
+        const r = el.getBoundingClientRect();
+        regions.push({ type: 'type', name: el.dataset.type, el,
+          x: r.left, y: r.top, w: r.width, h: r.height });
+      });
+      subKitBtns.forEach(el => {
+        const r = el.getBoundingClientRect();
+        regions.push({ type: 'kit', name: el.dataset.kit, el,
+          x: r.left, y: r.top, w: r.width, h: r.height });
+      });
+      {
+        const r = volTrack.getBoundingClientRect();
+        regions.push({ type: 'vol', name: 'volume', el: volTrack,
+          x: r.left, y: r.top, w: r.width, h: r.height });
+      }
+    }
+    function syncCanvasSize() {
+      const dpr = window.devicePixelRatio || 1;
+      // CSS size stays at the viewport; backing store is DPR× so 1 canvas
+      // pixel = 1 CSS pixel on HiDPI displays. This is what aligns the
+      // fingertip marker with the pad bounding rects (which are in CSS px).
+      canvas.style.width  = innerWidth  + 'px';
+      canvas.style.height = innerHeight + 'px';
+      canvas.width  = Math.round(innerWidth  * dpr);
+      canvas.height = Math.round(innerHeight * dpr);
+    }
+    window.addEventListener('resize', () => { syncCanvasSize(); computeRegions(); });
+
+    // ===== Volume control =====
+    function setVolume(v, fromFinger = false) {
+      state.volume = Math.max(0, Math.min(1, v));
+      if (masterGain) masterGain.gain.value = state.volume;
+      volFill.style.height = (state.volume * 100) + '%';
+      volHandle.style.bottom = (state.volume * 100) + '%';
+      volValue.textContent = Math.round(state.volume * 100);
+    }
+
+    function volumeFromY(y) {
+      // y is screen coord, track top is volTrack.getBoundingClientRect().top
+      const r = volTrack.getBoundingClientRect();
+      const ratio = 1 - Math.max(0, Math.min(1, (y - r.top) / r.height));
+      return ratio;
+    }
+
+    // ===== Instrument type selection =====
+    function setType(typeName) {
+      state.type = typeName;
+      typeBtns.forEach(b => b.classList.toggle('active', b.dataset.type === typeName));
+      renderPads(typeName);
+    }
+
+    // ===== Drum sub-kit selection =====
+    function setKit(kitName) {
+      state.kit = kitName;
+      subKitBtns.forEach(b => b.classList.toggle('active', b.dataset.kit === kitName));
+    }
+
+    // Right-column type buttons
+    typeBtns.forEach(b => b.addEventListener('click', () => setType(b.dataset.type)));
+    // Drum sub-kit buttons (only visible when type==='drums')
+    subKitBtns.forEach(b => b.addEventListener('click', () => setKit(b.dataset.kit)));
+
+    // ===== Mouse / touch fallback for pads =====
+    function onPadClick(e) {
+      const el = e.currentTarget;
+      const pad = (TYPE_LIBRARY[state.type] || TYPE_LIBRARY.drums).pads.find(p => p.name === el.dataset.pad);
+      if (!pad) return;
+      strikePad(pad);
+      el.classList.add('struck');
+      setTimeout(() => el.classList.remove('struck'), 320);
+    }
+
+    // Click / drag on the volume track to set volume.
+    function setVolumeFromEvent(e) {
+      const r = volTrack.getBoundingClientRect();
+      const y = (e.touches ? e.touches[0].clientY : e.clientY);
+      setVolume(1 - Math.max(0, Math.min(1, (y - r.top) / r.height)));
+    }
+    let volDragging = false;
+    volTrack.addEventListener('mousedown', (e) => { volDragging = true; setVolumeFromEvent(e); });
+    volTrack.addEventListener('touchstart', (e) => { volDragging = true; setVolumeFromEvent(e); e.preventDefault(); }, { passive: false });
+    window.addEventListener('mousemove', (e) => { if (volDragging) setVolumeFromEvent(e); });
+    window.addEventListener('touchmove', (e) => { if (volDragging) setVolumeFromEvent(e); }, { passive: true });
+    window.addEventListener('mouseup', () => { volDragging = false; });
+    window.addEventListener('touchend', () => { volDragging = false; });
+
+    // ===== Hit detection =====
+    // For each region we track whether the finger is currently inside it.
+    // On TRANSITION from outside -> inside, trigger the action.
+    const insideState = new Map(); // region-name -> { isInside: bool, lastTrigger: number }
+    function regionState(name) {
+      if (!insideState.has(name)) insideState.set(name, { isInside: false, lastTrigger: 0, type: null });
+      return insideState.get(name);
+    }
+
+    function hitTest(fingerX, fingerY) {
+      for (const r of regions) {
+        if (fingerX >= r.x && fingerX <= r.x + r.w &&
+            fingerY >= r.y && fingerY <= r.y + r.h) {
+          return r;
+        }
+      }
+      return null;
+    }
+
+    function processFinger(fingerX, fingerY) {
+      const hit = hitTest(fingerX, fingerY);
+
+      // Clear all hover states first
+      pads.forEach(p => p.classList.remove('hover'));
+      typeBtns.forEach(b => b.classList.remove('hover'));
+      subKitBtns.forEach(b => b.classList.remove('hover'));
+      volHandle.classList.remove('active');
+
+      if (!hit) {
+        // Finger is in empty space — clear all region inside-states
+        for (const s of insideState.values()) s.isInside = false;
+        return;
+      }
+
+      // Highlight the hit region
+      if (hit.type === 'pad') hit.el.classList.add('hover');
+      else if (hit.type === 'type') hit.el.classList.add('hover');
+      else if (hit.type === 'kit') hit.el.classList.add('hover');
+      else if (hit.type === 'vol') volHandle.classList.add('active');
+
+      const s = regionState(hit.name + ':' + hit.type);
+
+      if (hit.type === 'vol') {
+        // Continuous: set volume as finger moves on slider
+        setVolume(volumeFromY(fingerY));
+        s.isInside = true;
+        return;
+      }
+
+      // Discrete: trigger on outside -> inside transition
+      if (!s.isInside) {
+        const now = performance.now();
+        // Per-region cooldown of 180ms to debounce jitter at edges
+        if (now - s.lastTrigger > 180) {
+          s.lastTrigger = now;
+          if (hit.type === 'pad') {
+            const lib = TYPE_LIBRARY[state.type] || TYPE_LIBRARY.drums;
+            const pad = lib.pads.find(p => p.name === hit.name);
+            if (pad) {
+              strikePad(pad);
+              hit.el.classList.remove('hover');
+              hit.el.classList.add('struck');
+              setTimeout(() => hit.el.classList.remove('struck'), 320);
+            }
+          } else if (hit.type === 'type') {
+            setType(hit.name);
+          } else if (hit.type === 'kit') {
+            setKit(hit.name);
+          }
+        }
+        s.isInside = true;
+      }
+    }
+
+    // ===== Hand drawing =====
+    function drawFinger(x, y) {
+      // Outer glow
+      const g = ctx.createRadialGradient(x, y, 0, x, y, 32);
+      g.addColorStop(0, 'rgba(0,229,255,0.5)');
+      g.addColorStop(1, 'rgba(0,229,255,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, 32, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Core
+      ctx.fillStyle = '#00E5FF';
+      ctx.beginPath();
+      ctx.arc(x, y, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawHand(landmarks) {
+      const conn = [
+        [0,1],[1,2],[2,3],[3,4],
+        [0,5],[5,6],[6,7],[7,8],
+        [0,9],[9,10],[10,11],[11,12],
+        [0,13],[13,14],[14,15],[15,16],
+        [0,17],[17,18],[18,19],[19,20],
+        [5,9],[9,13],[13,17]
+      ];
+      ctx.strokeStyle = 'rgba(0,229,255,0.55)';
+      ctx.lineWidth = 2;
+      conn.forEach(([a, b]) => {
+        const pa = landmarkToScreen(landmarks[a]);
+        const pb = landmarkToScreen(landmarks[b]);
+        ctx.beginPath();
+        ctx.moveTo(pa.x, pa.y);
+        ctx.lineTo(pb.x, pb.y);
+        ctx.stroke();
+      });
+    }
+
+    // ===== MediaPipe Hands (legacy package — no GL regression) =====
+    let hands = null;
+    let handsBusy = false;
+    let lastVideoTime = -1;
+    let lastTip = null; // cached tip position to keep marker visible between frames
+
+    // ===== Diagnostic log (hidden by default; enable with ?debug=1) =====
+    const diagPanel = document.getElementById('diag-panel');
+    if (new URLSearchParams(location.search).has('debug')) {
+      diagPanel.classList.add('visible');
+    }
+    function diag(msg, kind = 'info') {
+      const line = document.createElement('div');
+      line.className = kind;
+      const t = new Date().toLocaleTimeString();
+      line.textContent = `[${t}] ${msg}`;
+      diagPanel.appendChild(line);
+      diagPanel.scrollTop = diagPanel.scrollHeight;
+      console[kind === 'err' ? 'error' : 'log'](msg);
+    }
+    diag('script running, secure context = ' + window.isSecureContext, 'info');
+    diag('location = ' + location.protocol + '//' + location.host, 'info');
+    diag('getUserMedia = ' + (navigator.mediaDevices && !!navigator.mediaDevices.getUserMedia), 'info');
+    diag('window.Hands = ' + (typeof window.Hands), 'info');
+
+    function whenHandsLibReady() {
+      return new Promise((resolve, reject) => {
+        const start = performance.now();
+        const check = () => {
+          if (typeof window.Hands === 'function') return resolve();
+          if (performance.now() - start > 20000) {
+            return reject(new Error('Hand-tracking library failed to load from CDN (timeout)'));
+          }
+          setTimeout(check, 50);
+        };
+        check();
+      });
+    }
+
+    async function loadHands() {
+      diag('waiting for @mediapipe/hands to load…');
+      await whenHandsLibReady();
+      diag('creating Hands instance…');
+      hands = new window.Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`,
+      });
+      hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 0,        // 0 = lite model — fast on CPU
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.5,
+      });
+      hands.onResults(onHandsResults);
+      diag('Hands ready', 'ok');
+    }
+
+    // Map a MediaPipe normalized landmark (0..1) into screen pixels the same
+    // way the #camera-bg <video> is rendered (object-fit: cover, mirrored).
+    // Output is in CSS pixels (not canvas backing-store pixels) so it lines
+    // up with `getBoundingClientRect()` of the pad elements.
+    function landmarkToScreen(tip) {
+      const vw = video.videoWidth  || 640;
+      const vh = video.videoHeight || 480;
+      const cw = innerWidth, ch = innerHeight;   // CSS px
+      const videoAspect = vw / vh;
+      const canvasAspect = cw / ch;
+      let sx, sy, drawW, drawH;
+      if (videoAspect > canvasAspect) {
+        // Video is wider than canvas — height fills, width is cropped
+        drawH = ch;
+        drawW = ch * videoAspect;
+        const cropX = (drawW - cw) / 2;
+        sx = (1 - tip.x) * drawW - cropX;          // mirror + crop
+        sy = tip.y * drawH;
+      } else {
+        // Video is taller — width fills, height is cropped
+        drawW = cw;
+        drawH = cw / videoAspect;
+        const cropY = (drawH - ch) / 2;
+        sx = (1 - tip.x) * drawW;
+        sy = tip.y * drawH - cropY;
+      }
+      return { x: sx, y: sy };
+    }
+
+    function onHandsResults(results) {
+      handsBusy = false;
+      const dpr = window.devicePixelRatio || 1;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);     // draw in CSS px
+      ctx.clearRect(0, 0, innerWidth, innerHeight);
+
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        state.lastHandSeen = performance.now();
+        statusDot.classList.add('live');
+        statusText.textContent = 'Tracking — point index finger to play';
+
+        const lm = results.multiHandLandmarks[0];
+        // Index finger tip = landmark #8
+        const tip = lm[8];
+        lastTip = tip;
+        const p = landmarkToScreen(tip);
+        drawFinger(p.x, p.y);
+        processFinger(p.x, p.y);
+      } else if (lastTip && (performance.now() - state.lastHandSeen < 800)) {
+        const p = landmarkToScreen(lastTip);
+        drawFinger(p.x, p.y);
+        processFinger(p.x, p.y);
+      } else {
+        lastTip = null;
+        pads.forEach(p => p.classList.remove('hover'));
+        typeBtns.forEach(b => b.classList.remove('hover'));
+        subKitBtns.forEach(b => b.classList.remove('hover'));
+        volHandle.classList.remove('active');
+        for (const s of insideState.values()) s.isInside = false;
+        if (performance.now() - state.lastHandSeen > 1500) {
+          statusDot.classList.remove('live');
+          statusText.textContent = 'No hand detected';
+        }
+      }
+    }
+
+    function predictHands() {
+      if (!hands) return;
+      if (video.readyState >= 2 && !handsBusy && video.currentTime !== lastVideoTime) {
+        lastVideoTime = video.currentTime;
+        handsBusy = true;
+        hands.send({ image: video }).catch((e) => {
+          handsBusy = false;
+          if (!predictHands._errored) {
+            diag('hands.send error: ' + e.message, 'err');
+            predictHands._errored = true;
+          }
+        });
+        if (predictHands._errored) predictHands._errored = false;
+      }
+      requestAnimationFrame(predictHands);
+    }
+
+    // Camera — split into "request stream" (must happen inside the user click)
+    // and "attach to <video>" (can happen later).
+    async function requestCameraStream() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('getUserMedia is not supported. Use Chrome/Safari on HTTPS or http://localhost.');
+      }
+      diag('calling getUserMedia — browser should show permission popup NOW');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30, max: 30 } },
+        audio: false,
+      });
+      diag('camera permission granted', 'ok');
+      return stream;
+    }
+
+    async function onStartClick() {
+      diag('button clicked', 'ok');
+      const btnStatus = document.getElementById('btn-status');
+      const setStatus = (msg) => { permissionBtn.textContent = msg; btnStatus.textContent = msg === 'Start Drumming' ? '' : '…'; diag(msg, 'info'); };
+
+      // 1) Secure context check
+      if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+        const msg = 'Insecure context: ' + location.protocol + '//' + location.host + '. Open via http://localhost:8000';
+        diag(msg, 'err');
+        showWarning(msg);
+        return;
+      }
+
+      // 2) Unlock audio NOW in the user gesture
+      try {
+        initAudio();
+        if (audioCtx.state === 'suspended') await audioCtx.resume();
+        diag('AudioContext state = ' + audioCtx.state, 'ok');
+      } catch (e) {
+        diag('AudioContext error: ' + e.message, 'err');
+      }
+
+      permissionBtn.disabled = true;
+      setStatus('Requesting camera…');
+
+      try {
+        // 3) Request camera IMMEDIATELY in the user-gesture handler.
+        const stream = await requestCameraStream();
+
+        // 4) Hide the prompt + show the drum UI RIGHT AWAY — don't block on MediaPipe
+        setStatus('Loading hand tracker…');
+        permissionPrompt.classList.add('hidden');
+        syncCanvasSize();
+        // Attach the live video stream immediately so the user sees themselves
+        video.srcObject = stream;
+        try { await video.play(); } catch (e) { diag('video.play() failed: ' + e.message, 'err'); }
+        diag('video playing', 'ok');
+        computeRegions();
+        statusText.textContent = 'Loading hand tracker…';
+
+        // 5) Load MediaPipe + start the prediction loop when ready
+        await loadHands();
+        lastVideoTime = -1;
+        predictHands();
+        statusText.textContent = 'Tracking — point index finger to play';
+      } catch (e) {
+        const msg = (e && e.name ? e.name + ': ' : '') + (e && e.message || e);
+        diag(msg, 'err');
+        console.error(e);
+        showWarning(msg);
+        permissionBtn.disabled = false;
+        setStatus('Start Drumming');
+      }
+    }
+
+    // ===== Init =====
+
+    function showWarning(msg) {
+      warningBanner.textContent = msg;
+      warningBanner.classList.add('visible');
+      clearTimeout(showWarning._t);
+      showWarning._t = setTimeout(() => warningBanner.classList.remove('visible'), 8000);
+    }
+
+    // ===== Init =====
+    permissionBtn.addEventListener('click', onStartClick);
+    renderPads('drums');           // initial pad grid
+    setVolume(0.7);
+  </script>
+</body>
+</html>
