@@ -1163,13 +1163,20 @@
       if (video.readyState >= 2 && !handsBusy && video.currentTime !== lastVideoTime) {
         lastVideoTime = video.currentTime;
         handsBusy = true;
-        hands.send({ image: video }).catch((e) => {
-          handsBusy = false;
-          if (!predictHands._errored) {
-            diag('hands.send error: ' + e.message, 'err');
-            predictHands._errored = true;
-          }
-        });
+        // MediaPipe 0.4 legacy Hands delivers results through onResults(), not
+        // via the resolved value of hands.send(). The promise resolves (never
+        // rejects) once the frame is queued, so we must clear handsBusy in
+        // .then() — otherwise it would only ever clear on error and the loop
+        // would lock up after the first frame.
+        hands.send({ image: video })
+          .then(() => { handsBusy = false; })
+          .catch((e) => {
+            handsBusy = false;
+            if (!predictHands._errored) {
+              diag('hands.send error: ' + e.message, 'err');
+              predictHands._errored = true;
+            }
+          });
         if (predictHands._errored) predictHands._errored = false;
       }
       requestAnimationFrame(predictHands);
