@@ -268,12 +268,119 @@
     .diag-panel .ok  { color: #00ff88; }
     .diag-panel .info { color: #ffaa55; }
     .warning-banner.visible { opacity: 1; }
-    .warning-banner.visible { opacity: 1; }
+
+    /* Background music panel (top-right floating pill) */
+    .music-panel {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      z-index: 40;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 14px 8px 8px;
+      background: rgba(17, 17, 28, 0.55);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-radius: 100px;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+    }
+    .music-btn {
+      position: relative;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.12s, background 0.15s, box-shadow 0.2s, border-color 0.15s;
+      padding: 0;
+    }
+    .music-btn:hover,
+    .music-btn.hover {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: var(--accent);
+      transform: scale(1.05);
+    }
+    .music-btn.active {
+      background: linear-gradient(135deg, rgba(255, 61, 113, 0.18), rgba(162, 155, 254, 0.18));
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow), 0 4px 14px rgba(0, 0, 0, 0.4);
+    }
+    .music-icon {
+      font-family: 'Outfit', sans-serif;
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text-muted);
+      line-height: 1;
+      transition: color 0.15s, text-shadow 0.2s;
+    }
+    .music-btn:hover .music-icon,
+    .music-btn.hover .music-icon {
+      color: var(--text-primary);
+    }
+    .music-btn.active .music-icon {
+      color: var(--accent);
+      text-shadow: 0 0 12px var(--accent-glow);
+    }
+    .music-vol-col {
+      display: flex;
+      align-items: center;
+      height: 40px;
+    }
+    .music-track {
+      position: relative;
+      width: 10px;
+      height: 100%;
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: 6px;
+      overflow: visible;
+      cursor: pointer;
+    }
+    .music-fill {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(0deg, var(--accent), #ff8ab4);
+      border-radius: 6px;
+      transition: height 0.08s ease-out;
+    }
+    .music-handle {
+      position: absolute;
+      left: 50%;
+      width: 24px;
+      height: 12px;
+      background: var(--text-primary);
+      border-radius: 6px;
+      transform: translate(-50%, 50%);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+      transition: box-shadow 0.2s, transform 0.15s;
+    }
+    .music-handle.active {
+      box-shadow: 0 0 0 3px var(--accent-glow), 0 4px 12px rgba(0, 0, 0, 0.4);
+    }
   </style>
 </head>
 <body>
   <video id="camera-bg" autoplay playsinline muted></video>
   <canvas id="gesture-canvas"></canvas>
+  <audio id="bg-music" src="paulyudin-ambient-ambient-music-482398.mp3" loop preload="auto"></audio>
+
+  <div id="music-panel" class="music-panel">
+    <button id="music-btn" class="music-btn" aria-label="Toggle background music" title="Toggle background music">
+      <span class="music-icon">♪</span>
+    </button>
+    <div class="music-vol-col">
+      <div id="music-track" class="music-track" title="Music volume">
+        <div id="music-fill" class="music-fill" style="height: 40%;"></div>
+        <div id="music-handle" class="music-handle" style="bottom: 40%;"></div>
+      </div>
+    </div>
+  </div>
 
   <div id="permission-prompt" class="permission-prompt">
     <h1>AIR INSTRUMENTS</h1>
@@ -374,6 +481,9 @@
     // ===== Audio Engine =====
     let audioCtx = null;
     let masterGain = null;
+    let bgMusic = null;       // HTMLAudioElement for the background track
+    let musicSource = null;   // MediaElementAudioSourceNode wrapping bgMusic
+    let musicGain = null;     // dedicated gain node so music volume is independent of masterGain
 
     function initAudio() {
       if (audioCtx) return;
@@ -381,6 +491,44 @@
       masterGain = audioCtx.createGain();
       masterGain.gain.value = state.volume;
       masterGain.connect(audioCtx.destination);
+    }
+
+    // ===== Background music =====
+    // The music gain node lives on its own so the music volume is independent
+    // of the master pad volume. initMusic() must be called AFTER initAudio()
+    // and audioCtx.resume() — i.e. inside the user-gesture click handler.
+    function initMusic() {
+      if (musicGain) return;  // idempotent
+      musicGain = audioCtx.createGain();
+      musicGain.gain.value = state.musicOn ? state.musicVolume : 0;
+      musicGain.connect(audioCtx.destination);
+    }
+
+    function applyMusicVolume() {
+      if (musicGain) {
+        musicGain.gain.value = state.musicOn ? state.musicVolume : 0;
+      }
+      if (musicFill) musicFill.style.height = (state.musicVolume * 100) + '%';
+      if (musicHandle) musicHandle.style.bottom = (state.musicVolume * 100) + '%';
+    }
+
+    function setMusicVolume(v) {
+      state.musicVolume = Math.max(0, Math.min(1, v));
+      applyMusicVolume();
+    }
+
+    function musicVolumeFromY(y) {
+      const r = musicTrack.getBoundingClientRect();
+      return 1 - Math.max(0, Math.min(1, (y - r.top) / r.height));
+    }
+
+    function toggleMusic() {
+      state.musicOn = !state.musicOn;
+      if (musicBtn) musicBtn.classList.toggle('active', state.musicOn);
+      if (musicGain) {
+        musicGain.gain.value = state.musicOn ? state.musicVolume : 0;
+      }
+      diag('music ' + (state.musicOn ? 'on' : 'off'), 'info');
     }
 
     // Drum kit presets — each tunes the synthesis parameters
@@ -780,6 +928,8 @@
       type: 'drums',     // current instrument type (drums/bass/synth/keys/pluck)
       kit: '808',        // drum sub-kit, only used when type==='drums'
       lastHandSeen: 0,
+      musicOn: false,    // background music is off until the user opts in
+      musicVolume: 0.4,  // quiet default — sits under the pads
     };
 
     // ===== DOM refs =====
@@ -798,6 +948,10 @@
     const padGrid = document.getElementById('pad-grid');
     const titleFlavor = document.getElementById('title-flavor');
     const subCol = document.getElementById('sub-col');
+    const musicBtn = document.getElementById('music-btn');
+    const musicTrack = document.getElementById('music-track');
+    const musicFill = document.getElementById('music-fill');
+    const musicHandle = document.getElementById('music-handle');
 
     let pads = [];                         // current rendered pad elements
     const typeBtns = Array.from(document.querySelectorAll('.kit-btn[data-type]'));
@@ -847,6 +1001,16 @@
       {
         const r = volTrack.getBoundingClientRect();
         regions.push({ type: 'vol', name: 'volume', el: volTrack,
+          x: r.left, y: r.top, w: r.width, h: r.height });
+      }
+      {
+        const r = musicBtn.getBoundingClientRect();
+        regions.push({ type: 'musicToggle', name: 'musicToggle', el: musicBtn,
+          x: r.left, y: r.top, w: r.width, h: r.height });
+      }
+      {
+        const r = musicTrack.getBoundingClientRect();
+        regions.push({ type: 'musicVol', name: 'musicVol', el: musicTrack,
           x: r.left, y: r.top, w: r.width, h: r.height });
       }
     }
@@ -920,6 +1084,23 @@
     window.addEventListener('mouseup', () => { volDragging = false; });
     window.addEventListener('touchend', () => { volDragging = false; });
 
+    // Click / drag on the music track to set music volume.
+    function setMusicVolumeFromEvent(e) {
+      const r = musicTrack.getBoundingClientRect();
+      const y = (e.touches ? e.touches[0].clientY : e.clientY);
+      setMusicVolume(1 - Math.max(0, Math.min(1, (y - r.top) / r.height)));
+    }
+    let musicDragging = false;
+    musicTrack.addEventListener('mousedown', (e) => { musicDragging = true; setMusicVolumeFromEvent(e); });
+    musicTrack.addEventListener('touchstart', (e) => { musicDragging = true; setMusicVolumeFromEvent(e); e.preventDefault(); }, { passive: false });
+    window.addEventListener('mousemove', (e) => { if (musicDragging) setMusicVolumeFromEvent(e); });
+    window.addEventListener('touchmove', (e) => { if (musicDragging) setMusicVolumeFromEvent(e); }, { passive: true });
+    window.addEventListener('mouseup', () => { musicDragging = false; });
+    window.addEventListener('touchend', () => { musicDragging = false; });
+
+    // Music toggle button — click toggles playback.
+    musicBtn.addEventListener('click', toggleMusic);
+
     // ===== Hit detection =====
     // For each region we track whether the finger is currently inside it.
     // On TRANSITION from outside -> inside, trigger the action.
@@ -947,6 +1128,8 @@
       typeBtns.forEach(b => b.classList.remove('hover'));
       subKitBtns.forEach(b => b.classList.remove('hover'));
       volHandle.classList.remove('active');
+      musicBtn.classList.remove('hover');
+      musicHandle.classList.remove('active');
 
       if (!hit) {
         // Finger is in empty space — clear all region inside-states
@@ -959,12 +1142,19 @@
       else if (hit.type === 'type') hit.el.classList.add('hover');
       else if (hit.type === 'kit') hit.el.classList.add('hover');
       else if (hit.type === 'vol') volHandle.classList.add('active');
+      else if (hit.type === 'musicToggle') musicBtn.classList.add('hover');
+      else if (hit.type === 'musicVol') musicHandle.classList.add('active');
 
       const s = regionState(hit.name + ':' + hit.type);
 
+      // Continuous mappings — set every frame while finger is on the region.
       if (hit.type === 'vol') {
-        // Continuous: set volume as finger moves on slider
         setVolume(volumeFromY(fingerY));
+        s.isInside = true;
+        return;
+      }
+      if (hit.type === 'musicVol') {
+        setMusicVolume(musicVolumeFromY(fingerY));
         s.isInside = true;
         return;
       }
@@ -972,8 +1162,10 @@
       // Discrete: trigger on outside -> inside transition
       if (!s.isInside) {
         const now = performance.now();
-        // Per-region cooldown of 180ms to debounce jitter at edges
-        if (now - s.lastTrigger > 180) {
+        // Per-region cooldown. Pads/type/kit: 180ms. Music toggle: 350ms —
+        // a hand passing over the toggle while playing shouldn't flip it.
+        const cooldown = (hit.type === 'musicToggle') ? 350 : 180;
+        if (now - s.lastTrigger > cooldown) {
           s.lastTrigger = now;
           if (hit.type === 'pad') {
             const lib = TYPE_LIBRARY[state.type] || TYPE_LIBRARY.drums;
@@ -988,6 +1180,8 @@
             setType(hit.name);
           } else if (hit.type === 'kit') {
             setKit(hit.name);
+          } else if (hit.type === 'musicToggle') {
+            toggleMusic();
           }
         }
         s.isInside = true;
@@ -1217,6 +1411,26 @@
         diag('AudioContext state = ' + audioCtx.state, 'ok');
       } catch (e) {
         diag('AudioContext error: ' + e.message, 'err');
+      }
+
+      // 2b) Hook up background music through Web Audio. Must happen in the
+      // user gesture (after resume) so the MediaElementAudioSourceNode is
+      // created against an unlocked context. We start playback silently so
+      // the file is buffered and ready; the user toggles it on with the
+      // music button.
+      try {
+        bgMusic = document.getElementById('bg-music');
+        musicSource = audioCtx.createMediaElementSource(bgMusic);
+        initMusic();
+        musicSource.connect(musicGain);
+        // Keep the <audio> element's own volume at 1 — musicGain handles the mix.
+        bgMusic.volume = 1;
+        // Pre-buffer by calling play() (which is a promise). The track starts
+        // muted because musicGain.gain.value is 0 until the user toggles it.
+        bgMusic.play().catch((e) => diag('bgMusic.play() failed: ' + e.message, 'err'));
+        diag('Background music loaded', 'ok');
+      } catch (e) {
+        diag('Music init error: ' + e.message, 'err');
       }
 
       permissionBtn.disabled = true;
